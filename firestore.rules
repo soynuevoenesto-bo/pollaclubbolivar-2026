@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: check if user is admin
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Helper: check if predictions are closed for a polla
+    function predictionsClosed(pollaId) {
+      let polla = get(/databases/$(database)/documents/pollas/$(pollaId));
+      return polla.data.closesAt < request.time;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Pollas collection
+    match /pollas/{pollaId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+
+      // Matches subcollection (16avos - admin only write)
+      match /matches/{matchId} {
+        allow read: if request.auth != null;
+        allow write: if isAdmin();
+      }
+
+      // Picks subcollection
+      match /picks/{userId} {
+        // Anyone logged in can read picks only if predictions are closed
+        allow read: if request.auth != null &&
+          (request.auth.uid == userId || predictionsClosed(pollaId));
+        // Users can only write their own picks before close
+        allow write: if request.auth != null &&
+          request.auth.uid == userId &&
+          !predictionsClosed(pollaId);
+      }
+
+      // Official results - admin only write, anyone can read
+      match /results/{doc} {
+        allow read: if request.auth != null;
+        allow write: if isAdmin();
+      }
+    }
+  }
+}
